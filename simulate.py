@@ -6,8 +6,18 @@ warnings.filterwarnings("ignore")
 
 # import polars as pl
 
+def calc_ptb_loss(posterior_c, posterior_t):
+    ptb = (posterior_t > posterior_c).mean()
+    loss = posterior_t - posterior_c
+    loss[loss > 0] = np.nan
+    exp_loss = np.nanmean(loss)
+    return ptb, exp_loss
+
 def calc_ptb(posterior_c, posterior_t):
     return (posterior_t > posterior_c).mean()
+
+def calc_loss(posterior_c, posterior_t):
+    return (posterior_t - posterior_c).mean()
 
 # def calc_hdi(arr: np.array, hdi_prob: float = 0.95):
 #     arr = arr.flatten()
@@ -22,9 +32,18 @@ def calc_ptb(posterior_c, posterior_t):
 #     hdi_interval = np.array([hdi_min, hdi_max])
 #     return hdi_interval
 
-def simulate(n_units=100_000, perc_change=[0, 0], samples=1000, seed=None):
+def simulate(
+        n_units=100_000, 
+        prob_success=0.02, #TODO: maybe change to mean_prob_success?
+        eff_sample_size=None,
+        prior_alphas=[1,1],
+        prior_betas=[1,1],
+        perc_change=[0, 0], 
+        samples=1000, 
+        seed=None
+    ):
     expt = ExperimentImpact(perc_change=perc_change)
-    dgp = DgpProportion(prob_success=0.02)
+    dgp = DgpProportion(prob_success=prob_success, eff_sample_size=eff_sample_size)
     stream_df = dgp.dgp(n_units=n_units, expt_impact=expt)
 
     if seed is None:
@@ -32,10 +51,8 @@ def simulate(n_units=100_000, perc_change=[0, 0], samples=1000, seed=None):
     control_rng = np.random.default_rng(seed=seed)
     treatment_rng = np.random.default_rng(seed=seed+27)
 
-    control_alpha_prior = 1
-    control_beta_prior = 1
-    treatment_alpha_prior = 1
-    treatment_beta_prior = 1
+    control_alpha_prior, treatment_alpha_prior = prior_alphas
+    control_beta_prior, treatment_beta_prior = prior_betas
 
     stream_df['control'] = stream_df['treatment']==0
     stream_df['control_successes_cum'] = (stream_df['outcome'] * stream_df['control']).cumsum()
@@ -49,10 +66,12 @@ def simulate(n_units=100_000, perc_change=[0, 0], samples=1000, seed=None):
     stream_df['treatment_alpha_posterior'] = treatment_alpha_prior + stream_df['treatment_successes_cum']
     stream_df['treatment_beta_posterior'] = treatment_beta_prior + stream_df['treatment_cum'] - stream_df['treatment_successes_cum']
 
-    stream_df['ptb'] = stream_df.apply(lambda x: calc_ptb(
-        control_rng.beta(a=x.control_alpha_posterior, b=x.control_beta_posterior, size=samples),
-        treatment_rng.beta(a=x.treatment_alpha_posterior, b=x.treatment_beta_posterior, size=samples) 
+    sample_calc = stream_df.apply(lambda x: calc_ptb_loss(
+        control_rng.beta(a=x.control_alpha_posterior, b=x.control_beta_posterior, size=samples), 
+        treatment_rng.beta(a=x.treatment_alpha_posterior, b=x.treatment_beta_posterior, size=samples)
     ), axis=1)
+    stream_df['ptb'] = sample_calc.apply(lambda x: x[0])
+    stream_df['exp_loss'] = sample_calc.apply(lambda x: x[1])
 
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=RuntimeWarning, message="invalid value encountered in %")
@@ -66,37 +85,11 @@ def simulate(n_units=100_000, perc_change=[0, 0], samples=1000, seed=None):
 
     return stream_df
 
-# Attempt with Polar
-# expt = ExperimentImpact(perc_change=[0,0])
-# dgp = DgpProportion(prob_success=0.02)
-# stream_df = dgp.dgp(n_units=100_000, expt_impact=expt)
-# stream_df = pl.from_pandas(stream_df)
-# seed = None
-# if seed is None:
-#     seed = np.random.default_rng().integers(0, 1000)
-# control_rng = np.random.default_rng(seed=seed)
-# treatment_rng = np.random.default_rng(seed=seed+27)
-# control_alpha_prior = 1
-# control_beta_prior = 1
-# treatment_alpha_prior = 1
-# treatment_beta_prior = 1
-# (
-#     stream_df
-#         .with_columns((pl.col('treatment')==0).alias('control'))
-#         .with_columns([
-#             ((pl.col('outcome') * pl.col('control')).cum_sum()).alias('control_successes_cum'),
-#             ((pl.col('outcome') * pl.col('treatment')).cum_sum()).alias('treatment_successes_cum'),
-#             ((pl.col('control')).cum_sum()).alias('control_cum'),
-#             ((pl.col('treatment')).cum_sum()).alias('treatment_cum'),
-#         ])
-#         .with_columns([
-#             (control_alpha_prior + pl.col('control_successes_cum')).alias('control_alpha_posterior'),
-#             (control_beta_prior + pl.col('control_cum') - pl.col('control_successes_cum')).alias('control_beta_posterior'),
-#             (treatment_alpha_prior + pl.col('treatment_successes_cum')).alias('treatment_alpha_posterior'),
-#             (treatment_beta_prior + pl.col('treatment_cum') - pl.col('treatment_successes_cum')).alias('treatment_beta_posterior'),
-#         ])
-# )
+
 
 # multiprocessing worker
 def run_simulation(_):
+    return simulate()
+
+def run_beta_simulation(_):
     return simulate()
