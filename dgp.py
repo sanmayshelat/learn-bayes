@@ -36,11 +36,25 @@ class DgpProportion:
 		self,
 		prob_success: Union[Sequence[float], float],
 		cluster_prob: Optional[Sequence[float]] = [1],
-		seed: Optional[int] = None,
+		eff_sample_size: Optional[float] = None,
+		seed: Optional[int] = None, # TODO: Need to add this everywhere
 	):
 		if isinstance(prob_success, (float, int)):
 			prob_success = [prob_success]
 		self.prob_success = np.asarray(prob_success)
+
+		if eff_sample_size is not None:
+			if self.prob_success.size > 1:
+				raise NotImplementedError(
+					'eff_sample_size can only be used with a single success probability.'
+				)
+			# print('Note: The same effective sample size is used for both experiment groups!')
+			self.alpha = eff_sample_size * self.prob_success
+			self.beta = eff_sample_size * (1 - self.prob_success)
+			self.dgm = 'beta'
+		else:
+			self.dgm = 'binomial'
+
 		self.rng = np.random.default_rng()
 
 		self.cluster_prob = np.asarray(cluster_prob)
@@ -58,8 +72,10 @@ class DgpProportion:
 		unit_clusters = self.rng.choice(
 			a=len(self.cluster_prob), size=n_units, p=self.cluster_prob
 		)
-
-		unit_success_probs = self.prob_success[unit_clusters]
+		if self.dgm=='binomial':
+			unit_success_probs = self.prob_success[unit_clusters]
+		elif self.dgm=='beta':
+			unit_success_probs = self.rng.beta(a=self.alpha, b=self.beta, size=n_units)
 
 		if expt_impact is not None:
 			unit_treatments = self.rng.choice(
