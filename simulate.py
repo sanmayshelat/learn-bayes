@@ -44,7 +44,7 @@ def simulate(
         independent=False,
         rel_lift_prior_mean = [0],
         rel_lift_prior_std=[100],  # uninformative prior
-        perc_change=[0, 10], 
+        perc_change=[0, 0], 
         samples=100, 
         seed=None
 ):
